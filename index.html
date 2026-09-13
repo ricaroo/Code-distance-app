@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SG Route Optimizer</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" aria-label="Route planner controls">
+      <header class="sidebar__header">
+        <h1 class="app-title">SG Route Optimizer</h1>
+        <p class="app-subtitle">Plan the fastest delivery run across Singapore</p>
+      </header>
+
+      <section class="panel" aria-labelledby="start-heading">
+        <h2 id="start-heading" class="panel__title">Starting Location</h2>
+        <div class="field">
+          <label for="start-input" class="sr-only">Starting location</label>
+          <input
+            type="text"
+            id="start-input"
+            class="text-input"
+            value="12 Little Road, Singapore"
+            placeholder="Enter starting address"
+            autocomplete="off"
+          />
+        </div>
+      </section>
+
+      <section class="panel" aria-labelledby="stops-heading">
+        <h2 id="stops-heading" class="panel__title">Delivery Stops</h2>
+        <div class="field field--inline">
+          <label for="stop-input" class="sr-only">Add a delivery stop</label>
+          <input
+            type="text"
+            id="stop-input"
+            class="text-input"
+            placeholder="Enter a delivery address"
+            autocomplete="off"
+          />
+          <button type="button" id="add-stop-btn" class="btn btn--secondary">Add Stop</button>
+        </div>
+
+        <ul id="stops-list" class="stops-list" aria-label="Delivery stops">
+          <!-- Stop items injected here by app.js -->
+        </ul>
+      </section>
+
+      <section class="panel panel--action">
+        <button type="button" id="optimize-btn" class="btn btn--primary btn--block">
+          Optimize Route
+        </button>
+      </section>
+
+      <section class="panel panel--results" id="results-panel" hidden aria-labelledby="results-heading">
+        <h2 id="results-heading" class="panel__title">Results</h2>
+
+        <div class="results-summary">
+          <div class="summary-stat">
+            <span class="summary-stat__label">Total Distance</span>
+            <span class="summary-stat__value" id="total-distance">–</span>
+          </div>
+          <div class="summary-stat">
+            <span class="summary-stat__label">Total Time</span>
+            <span class="summary-stat__value" id="total-time">–</span>
+          </div>
+        </div>
+
+        <ol id="legs-list" class="legs-list" aria-label="Optimized stop order">
+          <!-- Leg cards injected here by app.js -->
+        </ol>
+      </section>
+    </aside>
+
+    <main class="map-area" aria-label="Route map">
+      <div id="map"></div>
+    </main>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="js/geocoder.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/solver.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
