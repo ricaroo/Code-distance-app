@@ -383,18 +383,13 @@ body {
 /* ---------- Autocomplete dropdown ---------- */
 
 .autocomplete-wrap {
-  position: relative;
+  /* no special positioning — dropdown flows in the sidebar scroll */
 }
 
 .autocomplete-list {
   display: none;
-  position: absolute;
-  top: 100%;
-  left: 0;
-  right: 0;
-  z-index: 1000;
   list-style: none;
-  margin: 4px 0 0 0;
+  margin: 6px 0 0 0;
   padding: 4px 0;
   background: var(--navy-lighter);
   border: 1px solid var(--border-subtle);

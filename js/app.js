@@ -152,6 +152,7 @@
     function selectItem(idx) {
       if (idx < 0 || idx >= items.length) return;
       var item = items[idx];
+      if (item.isHint) { hideList(); return; }
       inputEl.value = item.displayName;
       selectedFromList = true;
       hideList();
@@ -179,25 +180,40 @@
         return;
       }
       debounceTimer = setTimeout(function () {
-        Geocoder.autocomplete(query).then(showList);
-      }, 250);
+        Geocoder.autocomplete(query).then(function (results) {
+          showList(results);
+          if (!results.length && query.length >= 3) {
+            showList([{ displayName: 'No results — press Enter to search "' + query + '"', lat: null, lng: null, isHint: true }]);
+          }
+        });
+      }, 800);
     });
 
     inputEl.addEventListener('keydown', function (e) {
-      if (!items.length) return;
-
-      if (e.key === 'ArrowDown') {
+      if (e.key === 'ArrowDown' && items.length) {
         e.preventDefault();
         setActive(Math.min(activeIdx + 1, items.length - 1));
-      } else if (e.key === 'ArrowUp') {
+      } else if (e.key === 'ArrowUp' && items.length) {
         e.preventDefault();
         setActive(Math.max(activeIdx - 1, 0));
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (activeIdx >= 0) {
+        if (activeIdx >= 0 && items.length) {
           selectItem(activeIdx);
-        } else if (items.length) {
+        } else if (items.length && !items[0].isHint) {
           selectItem(0);
+        } else {
+          // No dropdown — geocode the typed text directly
+          hideList();
+          var val = inputEl.value.trim();
+          if (val) {
+            Geocoder.geocode(val).then(function (place) {
+              inputEl.value = place.displayName;
+              onSelect(place);
+            }).catch(function (err) {
+              toast('Could not find that address. ' + (err.message || ''), 'error');
+            });
+          }
         }
       } else if (e.key === 'Escape') {
         hideList();
@@ -432,36 +448,17 @@
     injectStyles();
     initMap();
 
-    // Autocomplete for start input
-    var startAC = setupAutocomplete(dom.startInput, dom.startSuggestions, function (place) {
-      setStart(place);
-    });
+    // Autocomplete for both inputs — Enter fallback is built into setupAutocomplete
+    setupAutocomplete(dom.startInput, dom.startSuggestions, setStart);
+    setupAutocomplete(dom.stopInput, dom.stopSuggestions, addStop);
 
-    // Autocomplete for stop input
-    var stopAC = setupAutocomplete(dom.stopInput, dom.stopSuggestions, function (place) {
-      addStop(place);
-    });
-
-    // Fallback: if user types and presses Enter without selecting from dropdown
-    dom.startInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !startAC.wasSelectedFromList()) {
-        e.preventDefault();
-        var val = dom.startInput.value.trim();
-        if (!val) return;
-        Geocoder.geocode(val).then(setStart).catch(function (err) {
-          toast('Could not find that address. ' + (err.message || ''), 'error');
-        });
-      }
-    });
-
+    // "Add" button for stop input
     dom.addStopBtn.addEventListener('click', function () {
       var val = dom.stopInput.value.trim();
       if (!val) return;
-      if (!stopAC.wasSelectedFromList()) {
-        Geocoder.geocode(val).then(addStop).catch(function (err) {
-          toast('Could not find that address. ' + (err.message || ''), 'error');
-        });
-      }
+      Geocoder.geocode(val).then(addStop).catch(function (err) {
+        toast('Could not find that address. ' + (err.message || ''), 'error');
+      });
     });
 
     dom.optimizeBtn.addEventListener('click', optimize);
