@@ -380,6 +380,75 @@ body {
   height: 100%;
 }
 
+/* ---------- Autocomplete dropdown ---------- */
+
+.autocomplete-wrap {
+  position: relative;
+}
+
+.autocomplete-list {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  list-style: none;
+  margin: 4px 0 0 0;
+  padding: 4px 0;
+  background: var(--navy-lighter);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.autocomplete-list--open {
+  display: block;
+}
+
+.autocomplete-item {
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-light);
+  cursor: pointer;
+  transition: background-color var(--transition);
+  line-height: 1.35;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.autocomplete-item:last-child {
+  border-bottom: none;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item--active {
+  background: var(--green);
+  color: #ffffff;
+}
+
+.autocomplete-item__name {
+  font-weight: 600;
+}
+
+.autocomplete-item__detail {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
+
+.autocomplete-item:hover .autocomplete-item__detail,
+.autocomplete-item--active .autocomplete-item__detail {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+/* ---------- Map placeholder ---------- */
+
+.map-placeholder {
+  display: none;
+}
+
 /* ---------- Responsive ---------- */
 
 @media (max-width: 767px) {

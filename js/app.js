@@ -1,41 +1,25 @@
-/**
- * app.js — Main application logic for the SG Route Optimizer.
- * Depends on globals: L (Leaflet), Geocoder, Router, Solver.
- */
 (function () {
   'use strict';
 
   var SINGAPORE_CENTER = [1.3521, 103.8198];
-  var DEFAULT_START_ADDRESS = '12 Little Road, Singapore';
-
-  var COLOR_START = '#1f8a3b';
-  var COLOR_STOP = '#2563eb';
-  var COLOR_ROUTE = '#2563eb';
-
-  // ---------------------------------------------------------------------
-  // State
-  // ---------------------------------------------------------------------
 
   var state = {
-    start: null, // { address, lat, lng }
-    stops: [], // [{ address, lat, lng }]
+    start: null,
+    stops: [],
     map: null,
     startMarker: null,
-    stopMarkers: [], // parallel to state.stops
+    stopMarkers: [],
     routeLine: null,
     optimizing: false
   };
-
-  // ---------------------------------------------------------------------
-  // DOM references (grabbed once the DOM is ready)
-  // ---------------------------------------------------------------------
 
   var dom = {};
 
   function cacheDom() {
     dom.startInput = document.getElementById('start-input');
-    dom.setStartBtn = document.getElementById('set-start-btn'); // optional, may not exist
+    dom.startSuggestions = document.getElementById('start-suggestions');
     dom.stopInput = document.getElementById('stop-input');
+    dom.stopSuggestions = document.getElementById('stop-suggestions');
     dom.addStopBtn = document.getElementById('add-stop-btn');
     dom.stopsList = document.getElementById('stops-list');
     dom.optimizeBtn = document.getElementById('optimize-btn');
@@ -43,170 +27,235 @@
     dom.totalDistanceEl = document.getElementById('total-distance');
     dom.totalTimeEl = document.getElementById('total-time');
     dom.legsList = document.getElementById('legs-list');
-    dom.mapEl = document.getElementById('map');
   }
 
-  // ---------------------------------------------------------------------
-  // One-time injected styles (toast, spinner, markers) so the app is fully
-  // functional even before/without css/styles.css supplying these rules.
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Inline styles for markers and toasts
+  // -------------------------------------------------------------------
 
-  function injectBaseStyles() {
-    var style = document.createElement('style');
-    style.textContent = [
-      '.sg-toast-container{position:fixed;top:16px;right:16px;z-index:10000;',
-      'display:flex;flex-direction:column;gap:8px;max-width:320px;}',
-      '.sg-toast{color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;',
-      'line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.2);opacity:0;',
-      'transform:translateY(-6px);transition:opacity .2s ease,transform .2s ease;}',
-      '.sg-toast--visible{opacity:1;transform:translateY(0);}',
-      '.sg-toast--error{background:#dc2626;}',
-      '.sg-toast--info{background:#334155;}',
-      '.sg-toast--success{background:#16a34a;}',
-      '.sg-marker{display:flex;align-items:center;justify-content:center;',
-      'width:28px;height:28px;border-radius:50%;color:#fff;font-weight:700;',
-      'font-size:13px;font-family:inherit;box-shadow:0 1px 4px rgba(0,0,0,.4);',
-      'border:2px solid #fff;}',
-      '.sg-marker--start{background:' + COLOR_START + ';}',
-      '.sg-marker--stop{background:' + COLOR_STOP + ';}',
-      '.sg-spinner{display:inline-block;width:14px;height:14px;',
-      'border:2px solid rgba(255,255,255,.5);border-top-color:#fff;',
-      'border-radius:50%;animation:sg-spin .7s linear infinite;',
-      'margin-right:8px;vertical-align:-2px;}',
-      '@keyframes sg-spin{to{transform:rotate(360deg);}}'
-    ].join('');
-    document.head.appendChild(style);
+  function injectStyles() {
+    var s = document.createElement('style');
+    s.textContent = [
+      '.sg-toast-box{position:fixed;top:16px;right:16px;z-index:10000;display:flex;flex-direction:column;gap:8px;max-width:340px}',
+      '.sg-toast{color:#fff;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.4;box-shadow:0 4px 12px rgba(0,0,0,.25);opacity:0;transform:translateY(-6px);transition:opacity .2s,transform .2s}',
+      '.sg-toast--show{opacity:1;transform:translateY(0)}',
+      '.sg-toast--error{background:#dc2626}',
+      '.sg-toast--info{background:#334155}',
+      '.sg-toast--success{background:#16a34a}',
+      '.sg-marker{display:flex;align-items:center;justify-content:center;width:30px;height:30px;border-radius:50%;color:#fff;font-weight:700;font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.4);border:2px solid #fff}',
+      '.sg-marker--start{background:#1f8a3b}',
+      '.sg-marker--stop{background:#2563eb}',
+      '.sg-spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.4);border-top-color:#fff;border-radius:50%;animation:sg-spin .6s linear infinite;margin-right:8px;vertical-align:-2px}',
+      '@keyframes sg-spin{to{transform:rotate(360deg)}}'
+    ].join('\n');
+    document.head.appendChild(s);
   }
 
-  // ---------------------------------------------------------------------
-  // Toast notifications
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Toast
+  // -------------------------------------------------------------------
 
-  var toastContainer = null;
-
-  function ensureToastContainer() {
-    if (!toastContainer) {
-      toastContainer = document.createElement('div');
-      toastContainer.className = 'sg-toast-container';
-      document.body.appendChild(toastContainer);
+  var toastBox;
+  function toast(msg, type) {
+    if (!toastBox) {
+      toastBox = document.createElement('div');
+      toastBox.className = 'sg-toast-box';
+      document.body.appendChild(toastBox);
     }
-    return toastContainer;
-  }
-
-  function showToast(message, type) {
-    var container = ensureToastContainer();
-    var toast = document.createElement('div');
-    toast.className = 'sg-toast sg-toast--' + (type || 'info');
-    toast.textContent = message;
-    container.appendChild(toast);
-
-    // Force layout so the transition to visible actually animates.
-    requestAnimationFrame(function () {
-      toast.classList.add('sg-toast--visible');
-    });
-
+    var el = document.createElement('div');
+    el.className = 'sg-toast sg-toast--' + (type || 'info');
+    el.textContent = msg;
+    toastBox.appendChild(el);
+    requestAnimationFrame(function () { el.classList.add('sg-toast--show'); });
     setTimeout(function () {
-      toast.classList.remove('sg-toast--visible');
-      setTimeout(function () {
-        if (toast.parentNode) {
-          toast.parentNode.removeChild(toast);
-        }
-      }, 250);
-    }, 4500);
+      el.classList.remove('sg-toast--show');
+      setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 250);
+    }, 4000);
   }
 
-  function showError(message) {
-    showToast(message, 'error');
-  }
-
-  // ---------------------------------------------------------------------
-  // Map setup
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Map
+  // -------------------------------------------------------------------
 
   function initMap() {
-    state.map = L.map(dom.mapEl).setView(SINGAPORE_CENTER, 12);
-
+    state.map = L.map('map').setView(SINGAPORE_CENTER, 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution:
-        '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
       maxZoom: 19
     }).addTo(state.map);
   }
 
-  function makeDivIcon(label, kind) {
+  function markerIcon(label, kind) {
     return L.divIcon({
       html: '<div class="sg-marker sg-marker--' + kind + '">' + label + '</div>',
-      className: '', // avoid Leaflet's default divIcon box styling
-      iconSize: [28, 28],
-      iconAnchor: [14, 14]
+      className: '',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15]
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Rendering: start marker, stop markers, stops list, route line
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Autocomplete
+  // -------------------------------------------------------------------
+
+  function setupAutocomplete(inputEl, listEl, onSelect) {
+    var debounceTimer = null;
+    var items = [];
+    var activeIdx = -1;
+    var selectedFromList = false;
+
+    function showList(suggestions) {
+      items = suggestions;
+      activeIdx = -1;
+      listEl.innerHTML = '';
+
+      if (!suggestions.length) {
+        listEl.classList.remove('autocomplete-list--open');
+        return;
+      }
+
+      suggestions.forEach(function (s, idx) {
+        var li = document.createElement('li');
+        li.className = 'autocomplete-item';
+
+        var parts = s.displayName.split(', ');
+        var nameSpan = document.createElement('div');
+        nameSpan.className = 'autocomplete-item__name';
+        nameSpan.textContent = parts[0] || s.displayName;
+
+        li.appendChild(nameSpan);
+
+        if (parts.length > 1) {
+          var detailSpan = document.createElement('div');
+          detailSpan.className = 'autocomplete-item__detail';
+          detailSpan.textContent = parts.slice(1).join(', ');
+          li.appendChild(detailSpan);
+        }
+
+        li.addEventListener('mousedown', function (e) {
+          e.preventDefault();
+          selectItem(idx);
+        });
+
+        listEl.appendChild(li);
+      });
+
+      listEl.classList.add('autocomplete-list--open');
+    }
+
+    function hideList() {
+      listEl.classList.remove('autocomplete-list--open');
+      items = [];
+      activeIdx = -1;
+    }
+
+    function selectItem(idx) {
+      if (idx < 0 || idx >= items.length) return;
+      var item = items[idx];
+      inputEl.value = item.displayName;
+      selectedFromList = true;
+      hideList();
+      onSelect(item);
+    }
+
+    function setActive(idx) {
+      var children = listEl.children;
+      if (activeIdx >= 0 && activeIdx < children.length) {
+        children[activeIdx].classList.remove('autocomplete-item--active');
+      }
+      activeIdx = idx;
+      if (activeIdx >= 0 && activeIdx < children.length) {
+        children[activeIdx].classList.add('autocomplete-item--active');
+        children[activeIdx].scrollIntoView({ block: 'nearest' });
+      }
+    }
+
+    inputEl.addEventListener('input', function () {
+      selectedFromList = false;
+      clearTimeout(debounceTimer);
+      var query = inputEl.value.trim();
+      if (query.length < 2) {
+        hideList();
+        return;
+      }
+      debounceTimer = setTimeout(function () {
+        Geocoder.autocomplete(query).then(showList);
+      }, 250);
+    });
+
+    inputEl.addEventListener('keydown', function (e) {
+      if (!items.length) return;
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setActive(Math.min(activeIdx + 1, items.length - 1));
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setActive(Math.max(activeIdx - 1, 0));
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (activeIdx >= 0) {
+          selectItem(activeIdx);
+        } else if (items.length) {
+          selectItem(0);
+        }
+      } else if (e.key === 'Escape') {
+        hideList();
+      }
+    });
+
+    inputEl.addEventListener('blur', function () {
+      setTimeout(hideList, 150);
+    });
+
+    return {
+      wasSelectedFromList: function () { return selectedFromList; },
+      reset: function () { selectedFromList = false; }
+    };
+  }
+
+  // -------------------------------------------------------------------
+  // Rendering
+  // -------------------------------------------------------------------
 
   function renderStartMarker() {
-    if (state.startMarker) {
-      state.map.removeLayer(state.startMarker);
-      state.startMarker = null;
-    }
-    if (!state.start) {
-      return;
-    }
+    if (state.startMarker) state.map.removeLayer(state.startMarker);
+    state.startMarker = null;
+    if (!state.start) return;
     state.startMarker = L.marker([state.start.lat, state.start.lng], {
-      icon: makeDivIcon('S', 'start'),
+      icon: markerIcon('S', 'start'),
       zIndexOffset: 1000
-    })
-      .addTo(state.map)
-      .bindTooltip(state.start.address);
+    }).addTo(state.map).bindTooltip(state.start.address);
   }
 
   function renderStopMarkers() {
-    state.stopMarkers.forEach(function (marker) {
-      state.map.removeLayer(marker);
-    });
-    state.stopMarkers = state.stops.map(function (stop, idx) {
+    state.stopMarkers.forEach(function (m) { state.map.removeLayer(m); });
+    state.stopMarkers = state.stops.map(function (stop, i) {
       return L.marker([stop.lat, stop.lng], {
-        icon: makeDivIcon(String(idx + 1), 'stop')
-      })
-        .addTo(state.map)
-        .bindTooltip(stop.address);
-    });
-  }
-
-  function renumberStopMarkers() {
-    state.stopMarkers.forEach(function (marker, idx) {
-      marker.setIcon(makeDivIcon(String(idx + 1), 'stop'));
+        icon: markerIcon(String(i + 1), 'stop')
+      }).addTo(state.map).bindTooltip(stop.address);
     });
   }
 
   function renderStopsList() {
     dom.stopsList.innerHTML = '';
-    state.stops.forEach(function (stop, idx) {
+    state.stops.forEach(function (stop, i) {
       var li = document.createElement('li');
       li.className = 'stop-item';
 
-      var badge = document.createElement('span');
-      badge.className = 'stop-item__badge';
-      badge.textContent = String(idx + 1);
+      var label = document.createElement('span');
+      label.className = 'stop-item__label';
+      label.textContent = (i + 1) + '. ' + stop.address;
 
-      var text = document.createElement('span');
-      text.className = 'stop-item__address';
-      text.textContent = stop.address;
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'stop-item__remove';
+      btn.setAttribute('aria-label', 'Remove ' + stop.address);
+      btn.textContent = '×';
+      btn.addEventListener('click', function () { removeStop(i); });
 
-      var removeBtn = document.createElement('button');
-      removeBtn.type = 'button';
-      removeBtn.className = 'stop-item__remove';
-      removeBtn.setAttribute('aria-label', 'Remove stop ' + stop.address);
-      removeBtn.textContent = '×'; // ×
-      removeBtn.addEventListener('click', function () {
-        removeStop(idx);
-      });
-
-      li.appendChild(badge);
-      li.appendChild(text);
-      li.appendChild(removeBtn);
+      li.appendChild(label);
+      li.appendChild(btn);
       dom.stopsList.appendChild(li);
     });
   }
@@ -222,275 +271,205 @@
     dom.totalTimeEl.textContent = '–';
   }
 
-  // ---------------------------------------------------------------------
-  // Address actions
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Actions
+  // -------------------------------------------------------------------
 
-  function setStart(address) {
-    address = (address || '').trim();
-    if (!address) {
-      showError('Please enter a starting address.');
-      return Promise.resolve();
-    }
-    return Geocoder.geocode(address)
-      .then(function (result) {
-        state.start = {
-          address: result.displayName || address,
-          lat: result.lat,
-          lng: result.lng
-        };
-        renderStartMarker();
-        clearRoute();
-      })
-      .catch(function (err) {
-        showError('Could not find that starting address. ' + describeError(err));
-      });
+  function setStart(place) {
+    state.start = {
+      address: place.displayName,
+      lat: place.lat,
+      lng: place.lng
+    };
+    renderStartMarker();
+    state.map.setView([place.lat, place.lng], 14);
+    clearRoute();
   }
 
-  function addStop(address) {
-    address = (address || '').trim();
-    if (!address) {
-      showError('Please enter a delivery address.');
-      return Promise.resolve();
-    }
-    return Geocoder.geocode(address)
-      .then(function (result) {
-        state.stops.push({
-          address: result.displayName || address,
-          lat: result.lat,
-          lng: result.lng
-        });
-        renderStopMarkers();
-        renderStopsList();
-        clearRoute();
-        dom.stopInput.value = '';
-      })
-      .catch(function (err) {
-        showError('Could not find that delivery address. ' + describeError(err));
-      });
+  function addStop(place) {
+    state.stops.push({
+      address: place.displayName,
+      lat: place.lat,
+      lng: place.lng
+    });
+    renderStopMarkers();
+    renderStopsList();
+    clearRoute();
+    dom.stopInput.value = '';
+    dom.stopInput.focus();
   }
 
-  function removeStop(index) {
-    state.stops.splice(index, 1);
+  function removeStop(idx) {
+    state.stops.splice(idx, 1);
     renderStopMarkers();
     renderStopsList();
     clearRoute();
   }
 
-  function describeError(err) {
-    if (!err) return '';
-    if (typeof err === 'string') return err;
-    if (err.message) return err.message;
-    return '';
-  }
+  // -------------------------------------------------------------------
+  // Format helpers
+  // -------------------------------------------------------------------
 
-  // ---------------------------------------------------------------------
-  // Router/Solver adapters (tolerate small shape differences)
-  // ---------------------------------------------------------------------
-
-  function getDistanceMatrix(points) {
-    return Router.getDistanceMatrix(points);
-  }
-
-  function getRouteGeometry(points) {
-    return Router.getRoute(points);
-  }
-
-  // ---------------------------------------------------------------------
-  // Formatting helpers
-  // ---------------------------------------------------------------------
-
-  function formatDistance(km) {
+  function fmtDist(km) {
     if (typeof km !== 'number' || isNaN(km)) return '–';
     return km.toFixed(1) + ' km';
   }
 
-  function formatDuration(minutes) {
-    if (typeof minutes !== 'number' || isNaN(minutes)) return '–';
-    var totalMinutes = Math.round(minutes);
-    var hours = Math.floor(totalMinutes / 60);
-    var mins = totalMinutes % 60;
-    if (hours > 0) {
-      return hours + 'h ' + mins + 'm';
-    }
-    return totalMinutes + ' min';
+  function fmtTime(mins) {
+    if (typeof mins !== 'number' || isNaN(mins)) return '–';
+    var m = Math.round(mins);
+    var h = Math.floor(m / 60);
+    var r = m % 60;
+    return h > 0 ? h + 'h ' + r + 'm' : m + ' min';
   }
 
-  // ---------------------------------------------------------------------
-  // Optimize flow
-  // ---------------------------------------------------------------------
+  // -------------------------------------------------------------------
+  // Optimize
+  // -------------------------------------------------------------------
 
-  function setOptimizing(isOptimizing) {
-    state.optimizing = isOptimizing;
-    dom.optimizeBtn.disabled = isOptimizing;
-    if (isOptimizing) {
-      dom.optimizeBtn.dataset.originalLabel = dom.optimizeBtn.textContent;
+  function setOptimizing(on) {
+    state.optimizing = on;
+    dom.optimizeBtn.disabled = on;
+    if (on) {
       dom.optimizeBtn.innerHTML = '<span class="sg-spinner"></span>Optimizing…';
     } else {
-      dom.optimizeBtn.textContent = dom.optimizeBtn.dataset.originalLabel || 'Optimize Route';
+      dom.optimizeBtn.textContent = 'Optimize Route';
     }
   }
 
-  function optimizeRoute() {
+  function optimize() {
     if (state.optimizing) return;
-
-    if (!state.start) {
-      showError('Please set a starting location first.');
-      return;
-    }
-    if (state.stops.length === 0) {
-      showError('Please add at least one delivery stop.');
-      return;
-    }
+    if (!state.start) { toast('Set a starting location first.', 'error'); return; }
+    if (!state.stops.length) { toast('Add at least one delivery stop.', 'error'); return; }
 
     setOptimizing(true);
-
     var allPoints = [state.start].concat(state.stops);
-    var latLngPoints = allPoints.map(function (p) {
-      return { lat: p.lat, lng: p.lng };
-    });
+    var locs = allPoints.map(function (p) { return { lat: p.lat, lng: p.lng }; });
 
-    getDistanceMatrix(latLngPoints)
-      .then(function (matrixResult) {
-        var distances = matrixResult.distances;
-        var solution = Solver.solve(distances, 0);
-        var orderedPoints = solution.order.map(function (idx) {
-          return latLngPoints[idx];
-        });
-
-        return getRouteGeometry(orderedPoints).then(function (routeResult) {
-          return { solution: solution, orderedPoints: orderedPoints, routeResult: routeResult };
+    Router.getDistanceMatrix(locs)
+      .then(function (matrix) {
+        var solution = Solver.solve(matrix.distances, 0);
+        var ordered = solution.order.map(function (i) { return locs[i]; });
+        return Router.getRoute(ordered).then(function (route) {
+          return { solution: solution, route: route, orderedAllPoints: solution.order.map(function (i) { return allPoints[i]; }) };
         });
       })
       .then(function (result) {
-        applyOptimizedRoute(allPoints, result.solution, result.routeResult);
+        // Re-order stops to match optimized order
+        var orderedStops = result.solution.order.slice(1).map(function (i) { return allPoints[i]; });
+        state.stops = orderedStops;
+        renderStopMarkers();
+        renderStopsList();
+
+        // Draw route
+        if (state.routeLine) state.map.removeLayer(state.routeLine);
+        var coords = result.route.geometry && result.route.geometry.coordinates
+          ? result.route.geometry.coordinates
+          : [];
+        var latLngs = coords.map(function (c) { return [c[1], c[0]]; });
+        state.routeLine = L.polyline(latLngs, { color: '#2563eb', weight: 4, opacity: 0.85 }).addTo(state.map);
+
+        // Results panel
+        dom.resultsPanel.hidden = false;
+        dom.totalDistanceEl.textContent = fmtDist(result.route.totalDistance);
+        dom.totalTimeEl.textContent = fmtTime(result.route.totalDuration);
+
+        // Leg details
+        dom.legsList.innerHTML = '';
+        var legs = result.route.legs || [];
+        var journey = [allPoints[0]].concat(orderedStops);
+
+        for (var i = 0; i < journey.length - 1; i++) {
+          var to = journey[i + 1];
+          var leg = legs[i];
+
+          var li = document.createElement('li');
+          li.className = 'leg-card';
+
+          var badge = document.createElement('span');
+          badge.className = 'leg-card__index';
+          badge.textContent = String(i + 1);
+
+          var body = document.createElement('div');
+          body.className = 'leg-card__body';
+
+          var addr = document.createElement('div');
+          addr.className = 'leg-card__address';
+          addr.textContent = to.address;
+
+          var meta = document.createElement('div');
+          meta.className = 'leg-card__meta';
+          meta.textContent = leg ? fmtDist(leg.distance) + ' · ' + fmtTime(leg.duration) : '';
+
+          body.appendChild(addr);
+          body.appendChild(meta);
+          li.appendChild(badge);
+          li.appendChild(body);
+          dom.legsList.appendChild(li);
+        }
+
+        // Fit map
+        if (latLngs.length) {
+          state.map.fitBounds(L.latLngBounds(latLngs), { padding: [40, 40] });
+        }
+
+        toast('Route optimized!', 'success');
       })
       .catch(function (err) {
-        showError('Could not optimize the route. ' + describeError(err));
+        toast('Optimization failed: ' + (err.message || err), 'error');
       })
       .then(function () {
         setOptimizing(false);
       });
   }
 
-  function applyOptimizedRoute(allPoints, solution, routeResult) {
-    // Re-order state.stops to match the optimized order (excluding the
-    // start, which is always allPoints[0] / solution.order[0]).
-    var orderedStops = solution.order.slice(1).map(function (idx) {
-      return allPoints[idx];
+  // -------------------------------------------------------------------
+  // Init
+  // -------------------------------------------------------------------
+
+  function init() {
+    cacheDom();
+    injectStyles();
+    initMap();
+
+    // Autocomplete for start input
+    var startAC = setupAutocomplete(dom.startInput, dom.startSuggestions, function (place) {
+      setStart(place);
     });
-    state.stops = orderedStops;
-    renderStopMarkers();
-    renderStopsList();
 
-    // Draw the actual road geometry (GeoJSON coordinates are [lng, lat]).
-    if (state.routeLine) {
-      state.map.removeLayer(state.routeLine);
-    }
-    var coords = routeResult.geometry && routeResult.geometry.coordinates
-      ? routeResult.geometry.coordinates
-      : [];
-    var latLngs = coords.map(function (c) {
-      return [c[1], c[0]]; // GeoJSON [lng,lat] → Leaflet [lat,lng]
+    // Autocomplete for stop input
+    var stopAC = setupAutocomplete(dom.stopInput, dom.stopSuggestions, function (place) {
+      addStop(place);
     });
-    state.routeLine = L.polyline(latLngs, {
-      color: COLOR_ROUTE,
-      weight: 4
-    }).addTo(state.map);
 
-    // Results panel.
-    dom.resultsPanel.hidden = false;
-    dom.totalDistanceEl.textContent = formatDistance(routeResult.totalDistance);
-    dom.totalTimeEl.textContent = formatDuration(routeResult.totalDuration);
-
-    dom.legsList.innerHTML = '';
-    var journey = [allPoints[0]].concat(orderedStops);
-    var legs = routeResult.legs || [];
-    for (var i = 0; i < journey.length - 1; i++) {
-      var from = journey[i];
-      var to = journey[i + 1];
-      var leg = legs[i];
-
-      var li = document.createElement('li');
-      li.className = 'leg-card';
-
-      var indexBadge = document.createElement('span');
-      indexBadge.className = 'leg-card__index';
-      indexBadge.textContent = String(i + 1);
-
-      var body = document.createElement('div');
-      body.className = 'leg-card__body';
-
-      var addrEl = document.createElement('div');
-      addrEl.className = 'leg-card__address';
-      addrEl.textContent = to.address;
-
-      var metaEl = document.createElement('div');
-      metaEl.className = 'leg-card__meta';
-      metaEl.textContent = leg
-        ? formatDistance(leg.distance) + ' · ' + formatDuration(leg.duration)
-        : '';
-
-      body.appendChild(addrEl);
-      body.appendChild(metaEl);
-      li.appendChild(indexBadge);
-      li.appendChild(body);
-      dom.legsList.appendChild(li);
-    }
-
-    // Fit map to show the entire route.
-    var bounds = L.latLngBounds(latLngs.length ? latLngs : journey.map(function (p) {
-      return [p.lat, p.lng];
-    }));
-    state.map.fitBounds(bounds, { padding: [40, 40] });
-
-    showToast('Route optimized successfully.', 'success');
-  }
-
-  // ---------------------------------------------------------------------
-  // Event wiring
-  // ---------------------------------------------------------------------
-
-  function wireEvents() {
+    // Fallback: if user types and presses Enter without selecting from dropdown
     dom.startInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !startAC.wasSelectedFromList()) {
         e.preventDefault();
-        setStart(dom.startInput.value);
-      }
-    });
-
-    if (dom.setStartBtn) {
-      dom.setStartBtn.addEventListener('click', function () {
-        setStart(dom.startInput.value);
-      });
-    }
-
-    dom.stopInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        addStop(dom.stopInput.value);
+        var val = dom.startInput.value.trim();
+        if (!val) return;
+        Geocoder.geocode(val).then(setStart).catch(function (err) {
+          toast('Could not find that address. ' + (err.message || ''), 'error');
+        });
       }
     });
 
     dom.addStopBtn.addEventListener('click', function () {
-      addStop(dom.stopInput.value);
+      var val = dom.stopInput.value.trim();
+      if (!val) return;
+      if (!stopAC.wasSelectedFromList()) {
+        Geocoder.geocode(val).then(addStop).catch(function (err) {
+          toast('Could not find that address. ' + (err.message || ''), 'error');
+        });
+      }
     });
 
-    dom.optimizeBtn.addEventListener('click', optimizeRoute);
-  }
+    dom.optimizeBtn.addEventListener('click', optimize);
 
-  // ---------------------------------------------------------------------
-  // Init
-  // ---------------------------------------------------------------------
-
-  function init() {
-    cacheDom();
-    injectBaseStyles();
-    initMap();
-    wireEvents();
-
-    var initialAddress = (dom.startInput.value || DEFAULT_START_ADDRESS).trim();
-    setStart(initialAddress);
+    // Geocode default start on load
+    Geocoder.geocode(dom.startInput.value).then(setStart).catch(function () {
+      toast('Could not geocode default start address.', 'error');
+    });
   }
 
   if (document.readyState === 'loading') {

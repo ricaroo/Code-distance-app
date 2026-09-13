@@ -1,222 +1,127 @@
-/**
- * geocoder.js
- *
- * Address geocoding for the Singapore delivery route optimizer, backed by
- * the free Nominatim (OpenStreetMap) search API. No API key required.
- *
- * Usage policy compliance (https://operations.osmfoundation.org/policies/nominatim/):
- *   - A descriptive User-Agent / Referer identifying the application is sent
- *     with every request (custom headers are set where the browser allows it;
- *     a `referrer` param is also added as a fallback since browsers control
- *     the actual Referer header themselves).
- *   - Requests are throttled to a maximum of 1 per second via an internal
- *     request queue, regardless of how many calls the app fires concurrently.
- *   - Results are biased to Singapore using a bounding viewbox.
- *
- * Exposes a single global: `Geocoder`.
- */
 (function (global) {
   'use strict';
 
-  var NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
-  var APP_NAME = 'SG-Delivery-Route-Optimizer/1.0';
-  var APP_CONTACT_REFERRER = 'https://sg-delivery-route-optimizer.app';
+  var PHOTON_BASE = 'https://photon.komoot.io';
+  // Singapore center for biasing results
+  var SG_LAT = 1.3521;
+  var SG_LNG = 103.8198;
 
-  // Singapore bounding box: left,top,right,bottom (lon,lat,lon,lat)
+  var NOMINATIM_BASE = 'https://nominatim.openstreetmap.org';
   var SG_VIEWBOX = '103.6,1.47,104.1,1.15';
 
-  // ---------------------------------------------------------------------
-  // Simple FIFO throttle queue: ensures at least MIN_INTERVAL_MS between
-  // the *start* of consecutive outgoing requests, as required by the
-  // Nominatim usage policy (max 1 request/second).
-  // ---------------------------------------------------------------------
-  var MIN_INTERVAL_MS = 1000;
-  var queue = [];
-  var queueRunning = false;
+  var MIN_INTERVAL_MS = 300;
   var lastRequestTime = 0;
 
-  function enqueue(taskFn) {
-    return new Promise(function (resolve, reject) {
-      queue.push({ taskFn: taskFn, resolve: resolve, reject: reject });
-      runQueue();
-    });
-  }
-
-  function runQueue() {
-    if (queueRunning) return;
-    queueRunning = true;
-
-    (function step() {
-      if (queue.length === 0) {
-        queueRunning = false;
-        return;
-      }
-
-      var now = Date.now();
-      var elapsed = now - lastRequestTime;
-      var wait = Math.max(0, MIN_INTERVAL_MS - elapsed);
-
-      setTimeout(function () {
-        var item = queue.shift();
-        lastRequestTime = Date.now();
-        Promise.resolve()
-          .then(item.taskFn)
-          .then(item.resolve, item.reject)
-          .then(step);
-      }, wait);
-    })();
-  }
-
-  // ---------------------------------------------------------------------
-  // Helpers
-  // ---------------------------------------------------------------------
-
-  function ensureSingapore(address) {
-    var trimmed = String(address || '').trim();
-    if (!trimmed) {
-      throw new Error('Geocoder: address must be a non-empty string.');
-    }
-    if (!/singapore/i.test(trimmed)) {
-      trimmed = trimmed + ', Singapore';
-    }
-    return trimmed;
-  }
-
-  function buildHeaders() {
-    // Note: browsers disallow scripts from overriding the real `Referer`
-    // header, and some environments also block custom `User-Agent` on
-    // fetch. We still set both — they take effect in non-browser runtimes
-    // (e.g. Node/server-side use of this module) and are harmless no-ops
-    // where the platform ignores them. The `referrer` field on the fetch
-    // request additionally signals the calling application.
-    return {
-      'User-Agent': APP_NAME + ' (' + APP_CONTACT_REFERRER + ')',
-      'Accept': 'application/json'
-    };
-  }
-
-  function fetchJson(url) {
-    return fetch(url, {
-      method: 'GET',
-      headers: buildHeaders(),
-      referrer: APP_CONTACT_REFERRER
+  function throttledFetch(url) {
+    var now = Date.now();
+    var wait = Math.max(0, MIN_INTERVAL_MS - (now - lastRequestTime));
+    return new Promise(function (resolve) {
+      setTimeout(resolve, wait);
+    }).then(function () {
+      lastRequestTime = Date.now();
+      return fetch(url, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' }
+      });
     }).then(function (response) {
       if (!response.ok) {
-        throw new Error(
-          'Geocoder: Nominatim request failed with status ' +
-            response.status +
-            ' ' +
-            response.statusText
-        );
+        throw new Error('Geocoder request failed: ' + response.status);
       }
       return response.json();
     });
   }
 
-  // ---------------------------------------------------------------------
-  // Public API
-  // ---------------------------------------------------------------------
+  function formatPhotonFeature(feature) {
+    var props = feature.properties || {};
+    var parts = [];
+    if (props.name) parts.push(props.name);
+    if (props.street) {
+      var streetPart = props.street;
+      if (props.housenumber) streetPart = props.housenumber + ' ' + streetPart;
+      if (!parts.length || parts[0] !== streetPart) parts.push(streetPart);
+    }
+    if (props.city || props.district) parts.push(props.city || props.district);
+    if (props.country) parts.push(props.country);
+    return parts.join(', ') || 'Unknown location';
+  }
 
   /**
-   * Geocode a free-form address to {lat, lng, displayName}.
-   * Automatically appends ", Singapore" if not already present, and biases
-   * results to the Singapore bounding box.
-   *
-   * @param {string} address
-   * @returns {Promise<{lat: number, lng: number, displayName: string}>}
+   * Autocomplete search — returns up to 5 suggestions as the user types.
+   * Uses Photon (Komoot) which is free, no API key, fast.
+   */
+  function autocomplete(query) {
+    query = (query || '').trim();
+    if (query.length < 2) {
+      return Promise.resolve([]);
+    }
+
+    var url = PHOTON_BASE + '/api?' +
+      'q=' + encodeURIComponent(query) +
+      '&lat=' + SG_LAT +
+      '&lon=' + SG_LNG +
+      '&limit=5' +
+      '&lang=en';
+
+    return throttledFetch(url).then(function (data) {
+      if (!data.features || !data.features.length) return [];
+
+      return data.features
+        .filter(function (f) {
+          // Only keep results in/near Singapore
+          var coords = f.geometry && f.geometry.coordinates;
+          if (!coords) return false;
+          var lng = coords[0], lat = coords[1];
+          return lat > 1.1 && lat < 1.5 && lng > 103.5 && lng < 104.2;
+        })
+        .map(function (f) {
+          var coords = f.geometry.coordinates;
+          return {
+            displayName: formatPhotonFeature(f),
+            lat: coords[1],
+            lng: coords[0]
+          };
+        });
+    }).catch(function () {
+      return [];
+    });
+  }
+
+  /**
+   * Full geocode — for the initial start address on page load.
+   * Falls back to Nominatim for a reliable single-result lookup.
    */
   function geocode(address) {
-    var query;
-    try {
-      query = ensureSingapore(address);
-    } catch (err) {
-      return Promise.reject(err);
+    address = (address || '').trim();
+    if (!address) return Promise.reject(new Error('Address is empty'));
+
+    if (!/singapore/i.test(address)) {
+      address = address + ', Singapore';
     }
 
-    return enqueue(function () {
-      var params = new URLSearchParams({
-        q: query,
-        format: 'jsonv2',
-        limit: '1',
-        viewbox: SG_VIEWBOX,
-        bounded: '1',
-        addressdetails: '0'
-      });
-      var url = NOMINATIM_BASE + '/search?' + params.toString();
+    var params = new URLSearchParams({
+      q: address,
+      format: 'jsonv2',
+      limit: '1',
+      viewbox: SG_VIEWBOX,
+      bounded: '1'
+    });
+    var url = NOMINATIM_BASE + '/search?' + params.toString();
 
-      return fetchJson(url).then(function (results) {
-        if (!Array.isArray(results) || results.length === 0) {
-          throw new Error(
-            'Geocoder: no results found for address "' + address + '".'
-          );
-        }
-        var best = results[0];
-        var lat = parseFloat(best.lat);
-        var lng = parseFloat(best.lon);
-        if (isNaN(lat) || isNaN(lng)) {
-          throw new Error(
-            'Geocoder: Nominatim returned an invalid coordinate for "' +
-              address +
-              '".'
-          );
-        }
-        return {
-          lat: lat,
-          lng: lng,
-          displayName: best.display_name || query
-        };
-      });
+    return throttledFetch(url).then(function (results) {
+      if (!results || !results.length) {
+        throw new Error('No results found for "' + address + '"');
+      }
+      var best = results[0];
+      return {
+        displayName: best.display_name || address,
+        lat: parseFloat(best.lat),
+        lng: parseFloat(best.lon)
+      };
     });
   }
 
-  /**
-   * Reverse-geocode a coordinate pair to a human-readable address string.
-   *
-   * @param {number} lat
-   * @param {number} lng
-   * @returns {Promise<string>} the display name of the nearest address
-   */
-  function reverseGeocode(lat, lng) {
-    if (typeof lat !== 'number' || typeof lng !== 'number' || isNaN(lat) || isNaN(lng)) {
-      return Promise.reject(
-        new Error('Geocoder: reverseGeocode requires numeric lat and lng.')
-      );
-    }
-
-    return enqueue(function () {
-      var params = new URLSearchParams({
-        lat: String(lat),
-        lon: String(lng),
-        format: 'jsonv2',
-        zoom: '18',
-        addressdetails: '0'
-      });
-      var url = NOMINATIM_BASE + '/reverse?' + params.toString();
-
-      return fetchJson(url).then(function (result) {
-        if (!result || result.error || !result.display_name) {
-          throw new Error(
-            'Geocoder: no address found for coordinates (' +
-              lat +
-              ', ' +
-              lng +
-              ').'
-          );
-        }
-        return result.display_name;
-      });
-    });
-  }
-
-  var Geocoder = {
-    geocode: geocode,
-    reverseGeocode: reverseGeocode
+  global.Geocoder = {
+    autocomplete: autocomplete,
+    geocode: geocode
   };
-
-  global.Geocoder = Geocoder;
-
-  // Support CommonJS/Node-style consumption as well, if present.
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = Geocoder;
-  }
 })(typeof window !== 'undefined' ? window : this);
